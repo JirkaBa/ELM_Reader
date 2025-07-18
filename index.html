@@ -217,14 +217,59 @@ protoBtns.forEach(btn => {
     async function getAllPIDs() {
       if (!characteristic) return;
       output.textContent += '\nZjišťuji všechny dostupné PIDy...';
-      logDebug('SEND: 0100 (Get all PIDs)');
-      // 0100 = seznam podporovaných PID 01-20
-      const cmd = '0100\r';
-      const data = new TextEncoder().encode(cmd);
-      await characteristic.writeValue(data);
-      output.textContent += `\nPříkaz odeslán: ${cmd.trim()}`;
-      logDebug('SEND: ' + cmd.trim());
-      // Výsledek bude zobrazen v output (surová odpověď)
+      logDebug('SEND: 0100/0120/0140/0160 (Get all PIDs)');
+      let supportedPIDs = [];
+      let pidBase = 0x00;
+      for (let i = 0; i < 4; i++) { // 0100, 0120, 0140, 0160
+        const pidCmd = '01' + pidBase.toString(16).padStart(2, '0').toUpperCase() + '\r';
+        const data = new TextEncoder().encode(pidCmd);
+        await characteristic.writeValue(data);
+        output.textContent += `\nPříkaz odeslán: ${pidCmd.trim()}`;
+        logDebug('SEND: ' + pidCmd.trim());
+        // Čekáme na odpověď
+        let response = await new Promise(resolve => {
+          let handler = (event) => {
+            const value = new TextDecoder().decode(event.target.value);
+            if (/^41 [0-9A-F]{2} /i.test(value)) {
+              characteristic.removeEventListener('characteristicvaluechanged', handler);
+              resolve(value);
+            }
+          };
+          characteristic.addEventListener('characteristicvaluechanged', handler);
+          // Timeout fallback
+          setTimeout(() => {
+            characteristic.removeEventListener('characteristicvaluechanged', handler);
+            resolve(null);
+          }, 1000);
+        });
+        if (response) {
+          // Najdi hex blok po "41 XX "
+          const m = response.match(/41 [0-9A-F]{2} (([0-9A-F]{2} ?){4})/i);
+          if (m) {
+            const bytes = m[1].replace(/ /g, '').match(/.{2}/g);
+            if (bytes) {
+              let base = pidBase + 1;
+              for (let b = 0; b < 4; b++) {
+                let byte = parseInt(bytes[b], 16);
+                for (let bit = 0; bit < 8; bit++) {
+                  if (byte & (1 << (7 - bit))) {
+                    const pidNum = base + b * 8 + bit;
+                    supportedPIDs.push('01' + pidNum.toString(16).padStart(2, '0').toUpperCase());
+                  }
+                }
+              }
+            }
+          }
+        }
+        pidBase += 0x20;
+      }
+      if (supportedPIDs.length > 0) {
+        output.textContent += `\nDostupné PIDy: ${supportedPIDs.join(', ')}`;
+        logDebug('Dostupné PIDy: ' + supportedPIDs.join(', '));
+      } else {
+        output.textContent += '\nNepodařilo se zjistit dostupné PIDy.';
+        logDebug('Nepodařilo se zjistit dostupné PIDy.');
+      }
     }
       }
     }
