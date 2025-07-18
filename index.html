@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#000000" />
+  <title>Spotřeba z OBD</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
+  <style>
+    body { font-family: sans-serif; text-align: center; padding: 2em; }
+    button { padding: 1em; font-size: 1.2em; margin-top: 1em; }
+    pre { background: #eee; padding: 1em; text-align: left; max-width: 600px; margin: 1em auto; white-space: pre-wrap; }
+    #consumption { font-size: 2em; color: #007700; margin-top: 1em; }
+  </style>
+</head>
+<body>
+  <h1>Spotřeba z OBD</h1>
+  <button id="connect">Připojit k OBD</button>
+  <div id="consumption">Průměrná spotřeba: --</div>
+  <pre id="output">Nepřipojeno</pre>
+
+  <script>
+    const output = document.getElementById('output');
+    const consumptionDiv = document.getElementById('consumption');
+
+    // Pomocná funkce pro parsování odpovědi na PID 015E (Fuel Rate)
+    function parseFuelRate(response) {
+      // Očekávaný formát odpovědi: "41 5E XX YY" (XX YY = hex bajty)
+      const match = response.match(/41 5E ([0-9A-F]{2}) ([0-9A-F]{2})/i);
+      if (!match) return null;
+      const A = parseInt(match[1], 16);
+      const B = parseInt(match[2], 16);
+      // Výpočet podle OBD-II: Fuel Rate (L/h) = ((A*256)+B)/20
+      return ((A * 256) + B) / 20;
+    }
+
+    async function connectOBD() {
+      try {
+        output.textContent = 'Vyhledávám OBD zařízení...';
+        const device = await navigator.bluetooth.requestDevice({
+          filters: [{ namePrefix: 'OBD' }],
+          optionalServices: [0xFFE0] // BLE service UUID
+        });
+
+        output.textContent = `Zařízení nalezeno: ${device.name}`;
+
+        const server = await device.gatt.connect();
+        const service = await server.getPrimaryService(0xFFE0);
+        const characteristic = await service.getCharacteristic(0xFFE1);
+
+        // Posloucháme odpovědi
+        await characteristic.startNotifications();
+        characteristic.addEventListener('characteristicvaluechanged', (event) => {
+          const value = new TextDecoder().decode(event.target.value);
+          output.textContent += `\nOBD odpověď: ${value}`;
+
+          // Pokus o parsování spotřeby
+          const fuelRate = parseFuelRate(value);
+          if (fuelRate !== null) {
+            consumptionDiv.textContent = `Průměrná spotřeba: ${fuelRate.toFixed(2)} l/h`;
+          }
+        });
+
+        // Inicializace ELM327 (volitelné, lze rozšířit)
+        const initCmds = ['ATZ', 'ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATSP0'];
+        for (const cmd of initCmds) {
+          const data = new TextEncoder().encode(cmd + '\r');
+          await characteristic.writeValue(data);
+          await new Promise(r => setTimeout(r, 300));
+        }
+
+        // Posíláme příkaz na zjištění spotřeby (PID 015E = Fuel rate)
+        const cmd = '015E\r';
+        const data = new TextEncoder().encode(cmd);
+        await characteristic.writeValue(data);
+
+        output.textContent += `\nPříkaz odeslán: ${cmd}`;
+      } catch (err) {
+        output.textContent = `Chyba: ${err.message}`;
+        consumptionDiv.textContent = 'Průměrná spotřeba: --';
+      }
+    }
+
+    document.getElementById('connect').addEventListener('click', connectOBD);
+  </script>
+</body>
+</html>
