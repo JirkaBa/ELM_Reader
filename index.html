@@ -17,53 +17,101 @@
 </head>
 <body>
   <h1>Spotřeba z OBD</h1>
+
   <button id="connect">Připojit k OBD</button>
-  <div id="consumption">Průměrná spotřeba: --</div>
+  <button id="refresh" style="display:none;">Načíst hodnoty</button>
+  <button id="getall" style="display:none;">GetALL</button>
+  <div id="values"></div>
   <pre id="output">Nepřipojeno</pre>
 
   <script>
-    const output = document.getElementById('output');
-    const consumptionDiv = document.getElementById('consumption');
 
-    // Pomocná funkce pro parsování odpovědi na PID 015E (Fuel Rate)
-    function parseFuelRate(response) {
-      // Očekávaný formát odpovědi: "41 5E XX YY" (XX YY = hex bajty)
-      const match = response.match(/41 5E ([0-9A-F]{2}) ([0-9A-F]{2})/i);
-      if (!match) return null;
-      const A = parseInt(match[1], 16);
-      const B = parseInt(match[2], 16);
-      // Výpočet podle OBD-II: Fuel Rate (L/h) = ((A*256)+B)/20
-      return ((A * 256) + B) / 20;
+    const output = document.getElementById('output');
+    const connectBtn = document.getElementById('connect');
+    const refreshBtn = document.getElementById('refresh');
+    const valuesDiv = document.getElementById('values');
+    const getAllBtn = document.getElementById('getall');
+
+    // PID map for VW T5 2008 (common OBD-II PIDs)
+    const PIDS = [
+      { name: 'Otáčky motoru (RPM)', pid: '010C', parse: parseRPM },
+      { name: 'Rychlost vozidla (km/h)', pid: '010D', parse: parseSpeed },
+      { name: 'Teplota chladicí kapaliny (°C)', pid: '0105', parse: parseCoolantTemp },
+      { name: 'Průtok vzduchu (MAF, g/s)', pid: '0110', parse: parseMAF },
+      { name: 'Spotřeba paliva (l/h)', pid: '015E', parse: parseFuelRate },
+    ];
+
+    let characteristic = null;
+    let lastValues = {};
+
+
+    // Parsování odpovědí pro různé PIDs
+    function parseRPM(response) {
+      // 41 0C XX YY
+      const m = response.match(/41 0C ([0-9A-F]{2}) ([0-9A-F]{2})/i);
+      if (!m) return null;
+      const A = parseInt(m[1], 16);
+      const B = parseInt(m[2], 16);
+      return (((A * 256) + B) / 4).toFixed(0);
     }
+    function parseSpeed(response) {
+      // 41 0D XX
+      const m = response.match(/41 0D ([0-9A-F]{2})/i);
+      if (!m) return null;
+      return parseInt(m[1], 16);
+    }
+    function parseCoolantTemp(response) {
+      // 41 05 XX
+      const m = response.match(/41 05 ([0-9A-F]{2})/i);
+      if (!m) return null;
+      return parseInt(m[1], 16) - 40;
+    }
+    function parseMAF(response) {
+      // 41 10 XX YY
+      const m = response.match(/41 10 ([0-9A-F]{2}) ([0-9A-F]{2})/i);
+      if (!m) return null;
+      const A = parseInt(m[1], 16);
+      const B = parseInt(m[2], 16);
+      return (((A * 256) + B) / 100).toFixed(2);
+    }
+    function parseFuelRate(response) {
+      // 41 5E XX YY
+      const m = response.match(/41 5E ([0-9A-F]{2}) ([0-9A-F]{2})/i);
+      if (!m) return null;
+      const A = parseInt(m[1], 16);
+      const B = parseInt(m[2], 16);
+      return (((A * 256) + B) / 20).toFixed(2);
+    }
+
 
     async function connectOBD() {
       try {
         output.textContent = 'Vyhledávám OBD zařízení...';
         const device = await navigator.bluetooth.requestDevice({
           filters: [{ namePrefix: 'OBD' }],
-          optionalServices: [0xFFE0] // BLE service UUID
+          optionalServices: [0xFFE0]
         });
-
         output.textContent = `Zařízení nalezeno: ${device.name}`;
-
         const server = await device.gatt.connect();
         const service = await server.getPrimaryService(0xFFE0);
-        const characteristic = await service.getCharacteristic(0xFFE1);
+        characteristic = await service.getCharacteristic(0xFFE1);
 
         // Posloucháme odpovědi
         await characteristic.startNotifications();
         characteristic.addEventListener('characteristicvaluechanged', (event) => {
           const value = new TextDecoder().decode(event.target.value);
           output.textContent += `\nOBD odpověď: ${value}`;
-
-          // Pokus o parsování spotřeby
-          const fuelRate = parseFuelRate(value);
-          if (fuelRate !== null) {
-            consumptionDiv.textContent = `Průměrná spotřeba: ${fuelRate.toFixed(2)} l/h`;
+          // Zkusit naparsovat všechny hodnoty
+          for (const pid of PIDS) {
+            const parsed = pid.parse(value);
+            if (parsed !== null) {
+              lastValues[pid.name] = parsed;
+              updateValuesDisplay();
+            }
           }
         });
 
-        // Inicializace ELM327 (volitelné, lze rozšířit)
+        // Inicializace ELM327
         const initCmds = ['ATZ', 'ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATSP0'];
         for (const cmd of initCmds) {
           const data = new TextEncoder().encode(cmd + '\r');
@@ -71,19 +119,66 @@
           await new Promise(r => setTimeout(r, 300));
         }
 
-        // Posíláme příkaz na zjištění spotřeby (PID 015E = Fuel rate)
-        const cmd = '015E\r';
-        const data = new TextEncoder().encode(cmd);
-        await characteristic.writeValue(data);
-
-        output.textContent += `\nPříkaz odeslán: ${cmd}`;
+        connectBtn.style.display = 'none';
+        refreshBtn.style.display = '';
+        getAllBtn.style.display = '';
+        valuesDiv.innerHTML = '<em>Stiskněte "Načíst hodnoty" nebo "GetALL" pro zobrazení údajů.</em>';
+        lastValues = {};
       } catch (err) {
         output.textContent = `Chyba: ${err.message}`;
-        consumptionDiv.textContent = 'Průměrná spotřeba: --';
+        connectBtn.style.display = '';
+        refreshBtn.style.display = 'none';
+        getAllBtn.style.display = 'none';
+        valuesDiv.innerHTML = '';
+    async function getAllPIDs() {
+      if (!characteristic) return;
+      output.textContent += '\nZjišťuji všechny dostupné PIDy...';
+      // 0100 = seznam podporovaných PID 01-20
+      const cmd = '0100\r';
+      const data = new TextEncoder().encode(cmd);
+      await characteristic.writeValue(data);
+      output.textContent += `\nPříkaz odeslán: ${cmd.trim()}`;
+      // Výsledek bude zobrazen v output (surová odpověď)
+    }
       }
     }
 
-    document.getElementById('connect').addEventListener('click', connectOBD);
+    async function refreshValues() {
+      if (!characteristic) return;
+      output.textContent += '\nNačítám hodnoty...';
+      lastValues = {};
+      updateValuesDisplay();
+      for (const pid of PIDS) {
+        const cmd = pid.pid + '\r';
+        const data = new TextEncoder().encode(cmd);
+        await characteristic.writeValue(data);
+        output.textContent += `\nPříkaz odeslán: ${cmd.trim()}`;
+        await new Promise(r => setTimeout(r, 300));
+      }
+    }
+
+    function updateValuesDisplay() {
+      if (Object.keys(lastValues).length === 0) {
+        valuesDiv.innerHTML = '<em>Žádné hodnoty nejsou k dispozici.</em>';
+        return;
+      }
+      let html = '<table style="margin:auto;">';
+      for (const pid of PIDS) {
+        html += `<tr><td style='text-align:right;padding:0.3em 1em;'>${pid.name}:</td><td style='text-align:left;padding:0.3em 1em;'>${lastValues[pid.name] !== undefined ? lastValues[pid.name] : '--'}`;
+        if (pid.name.includes('RPM')) html += ' ot/min';
+        if (pid.name.includes('km/h')) html += ' km/h';
+        if (pid.name.includes('°C')) html += ' °C';
+        if (pid.name.includes('MAF')) html += ' g/s';
+        if (pid.name.includes('paliva')) html += ' l/h';
+        html += '</td></tr>';
+      }
+      html += '</table>';
+      valuesDiv.innerHTML = html;
+    }
+
+    connectBtn.addEventListener('click', connectOBD);
+    refreshBtn.addEventListener('click', refreshValues);
+    getAllBtn.addEventListener('click', getAllPIDs);
   </script>
 </body>
 </html>
