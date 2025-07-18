@@ -32,12 +32,13 @@
       <button class="proto-btn" data-proto="4">J1850 VPW</button>
       <button class="proto-btn" data-proto="5">ISO 14230-4</button>
       <button class="proto-btn" data-proto="6">CAN</button>
+      <button id="copylog">Copy log file</button>
     </div>
   </nav>
 
   <div id="values"></div>
   <pre id="output">Nepřipojeno</pre>
-  <button id="copylog" style="position:fixed;top:1em;right:1em;z-index:10;">Copy log file</button>
+  <button id="copylog" style="display:none;">Copy log file</button>
 
   <script>
 
@@ -54,14 +55,29 @@
     // Výchozí protokol
     let selectedProto = 2; // ISO 9141-2
 
-    protoBtns.forEach(btn => {
-      btn.addEventListener('click', () => {
-        selectedProto = btn.getAttribute('data-proto');
-        protoBtns.forEach(b => b.style.background = '');
-        btn.style.background = '#cce';
-        logDebug('Změněn protokol na ATSP' + selectedProto);
-      });
-    });
+protoBtns.forEach(btn => {
+  btn.addEventListener('click', async () => {
+    selectedProto = btn.getAttribute('data-proto');
+    protoBtns.forEach(b => b.style.background = '');
+    btn.style.background = '#cce';
+    logDebug('Změněn protokol na ATSP' + selectedProto);
+    // Pokud je připojeno, pošli ATSPx ihned
+    if (characteristic) {
+      const cmd = 'ATSP' + selectedProto + '\r';
+      const data = new TextEncoder().encode(cmd);
+      logDebug('SEND: ' + cmd.trim());
+      try {
+        await characteristic.writeValue(data);
+        output.textContent += `\nProtokol změněn na ATSP${selectedProto}`;
+      } catch (e) {
+        output.textContent += `\nChyba při změně protokolu: ${e.message}`;
+        logDebug('CHYBA při změně protokolu: ' + e.message);
+      }
+    } else {
+      output.textContent += `\nProtokol bude použit při příštím připojení.`;
+    }
+  });
+});
     // Nastavit výchozí zvýraznění
     protoBtns.forEach(btn => {
       if (btn.getAttribute('data-proto') == selectedProto) btn.style.background = '#cce';
