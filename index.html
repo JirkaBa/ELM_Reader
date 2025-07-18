@@ -18,9 +18,22 @@
 <body>
   <h1>Data Scanner</h1>
 
-  <button id="connect">Připojit k OBD</button>
-  <button id="refresh" style="display:none;">Načíst hodnoty</button>
-  <button id="getall" style="display:none;">GetALL</button>
+
+  <nav style="margin-bottom:2em;">
+    <div id="menu" style="display:flex;flex-wrap:wrap;gap:0.5em;justify-content:center;align-items:center;">
+      <button id="connect">Připojit k OBD</button>
+      <button id="refresh" style="display:none;">Načíst hodnoty</button>
+      <button id="getall" style="display:none;">GetALL</button>
+      <span style="margin-left:1em;font-size:0.95em;">Protokol:</span>
+      <button class="proto-btn" data-proto="0">AUTO</button>
+      <button class="proto-btn" data-proto="1">J1850 PWM</button>
+      <button class="proto-btn" data-proto="2">ISO 9141-2</button>
+      <button class="proto-btn" data-proto="3">VAG/ISO14230</button>
+      <button class="proto-btn" data-proto="4">J1850 VPW</button>
+      <button class="proto-btn" data-proto="5">ISO 14230-4</button>
+      <button class="proto-btn" data-proto="6">CAN</button>
+    </div>
+  </nav>
 
   <div id="values"></div>
   <pre id="output">Nepřipojeno</pre>
@@ -30,11 +43,29 @@
 
 
     const output = document.getElementById('output');
+
     const connectBtn = document.getElementById('connect');
     const refreshBtn = document.getElementById('refresh');
     const valuesDiv = document.getElementById('values');
     const getAllBtn = document.getElementById('getall');
     const copyLogBtn = document.getElementById('copylog');
+    const protoBtns = document.querySelectorAll('.proto-btn');
+
+    // Výchozí protokol
+    let selectedProto = 2; // ISO 9141-2
+
+    protoBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        selectedProto = btn.getAttribute('data-proto');
+        protoBtns.forEach(b => b.style.background = '');
+        btn.style.background = '#cce';
+        logDebug('Změněn protokol na ATSP' + selectedProto);
+      });
+    });
+    // Nastavit výchozí zvýraznění
+    protoBtns.forEach(btn => {
+      if (btn.getAttribute('data-proto') == selectedProto) btn.style.background = '#cce';
+    });
 
     // Logovací mechanismus
     let debugLog = '';
@@ -146,7 +177,7 @@
         });
 
         // Inicializace ELM327
-        const initCmds = ['ATZ', 'ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATSP2'];
+        const initCmds = ['ATZ', 'ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATSP' + selectedProto];
         for (const cmd of initCmds) {
           const data = new TextEncoder().encode(cmd + '\r');
           logDebug('SEND: ' + cmd);
