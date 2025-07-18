@@ -21,16 +21,27 @@
   <button id="connect">Připojit k OBD</button>
   <button id="refresh" style="display:none;">Načíst hodnoty</button>
   <button id="getall" style="display:none;">GetALL</button>
+
   <div id="values"></div>
   <pre id="output">Nepřipojeno</pre>
+  <button id="copylog" style="position:fixed;top:1em;right:1em;z-index:10;">Copy log file</button>
 
   <script>
+
 
     const output = document.getElementById('output');
     const connectBtn = document.getElementById('connect');
     const refreshBtn = document.getElementById('refresh');
     const valuesDiv = document.getElementById('values');
     const getAllBtn = document.getElementById('getall');
+    const copyLogBtn = document.getElementById('copylog');
+
+    // Logovací mechanismus
+    let debugLog = '';
+    function logDebug(msg) {
+      const time = new Date().toISOString();
+      debugLog += `[${time}] ${msg}\n`;
+    }
 
     // PID map for VW T5 2008 (common OBD-II PIDs)
     const PIDS = [
@@ -94,11 +105,13 @@
       ];
       try {
         output.textContent = 'Vyhledávám OBD zařízení...';
+        logDebug('START: Vyhledávám OBD zařízení...');
         const device = await navigator.bluetooth.requestDevice({
           filters: [{ namePrefix: 'OBD' }],
           optionalServices: SERVICE_CHARACTERISTIC_PAIRS.map(p => p.service)
         });
         output.textContent = `Zařízení nalezeno: ${device.name}`;
+        logDebug('Zařízení nalezeno: ' + device.name);
         const server = await device.gatt.connect();
         let found = false;
         for (const pair of SERVICE_CHARACTERISTIC_PAIRS) {
@@ -107,6 +120,7 @@
             characteristic = await service.getCharacteristic(pair.characteristic);
             found = true;
             output.textContent += `\nPoužita služba: ${pair.service}, charakteristika: ${pair.characteristic}`;
+            logDebug(`Použita služba: ${pair.service}, charakteristika: ${pair.characteristic}`);
             break;
           } catch (e) {
             // Zkusíme další kombinaci
@@ -119,20 +133,23 @@
         characteristic.addEventListener('characteristicvaluechanged', (event) => {
           const value = new TextDecoder().decode(event.target.value);
           output.textContent += `\nOBD odpověď: ${value}`;
+          logDebug('OBD odpověď: ' + value.replace(/\r?\n/g, ' '));
           // Zkusit naparsovat všechny hodnoty
           for (const pid of PIDS) {
             const parsed = pid.parse(value);
             if (parsed !== null) {
               lastValues[pid.name] = parsed;
               updateValuesDisplay();
+              logDebug(`Parsed ${pid.name}: ${parsed}`);
             }
           }
         });
 
         // Inicializace ELM327
-        const initCmds = ['ATZ', 'ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATSP0'];
+        const initCmds = ['ATZ', 'ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATSP2'];
         for (const cmd of initCmds) {
           const data = new TextEncoder().encode(cmd + '\r');
+          logDebug('SEND: ' + cmd);
           await characteristic.writeValue(data);
           await new Promise(r => setTimeout(r, 300));
         }
@@ -142,8 +159,10 @@
         getAllBtn.style.display = '';
         valuesDiv.innerHTML = '<em>Stiskněte "Načíst hodnoty" nebo "GetALL" pro zobrazení údajů.</em>';
         lastValues = {};
+        logDebug('Připojení dokončeno.');
       } catch (err) {
         output.textContent = `Chyba: ${err.message}`;
+        logDebug('CHYBA: ' + err.message);
         connectBtn.style.display = '';
         refreshBtn.style.display = 'none';
         getAllBtn.style.display = 'none';
@@ -151,11 +170,13 @@
     async function getAllPIDs() {
       if (!characteristic) return;
       output.textContent += '\nZjišťuji všechny dostupné PIDy...';
+      logDebug('SEND: 0100 (Get all PIDs)');
       // 0100 = seznam podporovaných PID 01-20
       const cmd = '0100\r';
       const data = new TextEncoder().encode(cmd);
       await characteristic.writeValue(data);
       output.textContent += `\nPříkaz odeslán: ${cmd.trim()}`;
+      logDebug('SEND: ' + cmd.trim());
       // Výsledek bude zobrazen v output (surová odpověď)
     }
       }
@@ -164,15 +185,28 @@
     async function refreshValues() {
       if (!characteristic) return;
       output.textContent += '\nNačítám hodnoty...';
+      logDebug('START: Načítám hodnoty...');
       lastValues = {};
       updateValuesDisplay();
       for (const pid of PIDS) {
         const cmd = pid.pid + '\r';
         const data = new TextEncoder().encode(cmd);
+        logDebug('SEND: ' + pid.pid);
         await characteristic.writeValue(data);
         output.textContent += `\nPříkaz odeslán: ${cmd.trim()}`;
         await new Promise(r => setTimeout(r, 300));
       }
+    // Kopírování logu do schránky
+    copyLogBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(debugLog);
+        copyLogBtn.textContent = 'Log zkopírován!';
+        setTimeout(() => copyLogBtn.textContent = 'Copy log file', 1500);
+      } catch (e) {
+        copyLogBtn.textContent = 'Chyba kopírování!';
+        setTimeout(() => copyLogBtn.textContent = 'Copy log file', 1500);
+      }
+    });
     }
 
     function updateValuesDisplay() {
