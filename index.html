@@ -24,14 +24,7 @@
       <button id="connect">Připojit k OBD</button>
       <button id="refresh" style="display:none;">Načíst hodnoty</button>
       <button id="getall" style="display:none;">GetALL</button>
-      <span style="margin-left:1em;font-size:0.95em;">Protokol:</span>
-      <button class="proto-btn" data-proto="0">AUTO</button>
-      <button class="proto-btn" data-proto="1">J1850 PWM</button>
-      <button class="proto-btn" data-proto="2">ISO 9141-2</button>
-      <button class="proto-btn" data-proto="3">VAG/ISO14230</button>
-      <button class="proto-btn" data-proto="4">J1850 VPW</button>
-      <button class="proto-btn" data-proto="5">ISO 14230-4</button>
-      <button class="proto-btn" data-proto="6">CAN</button>
+      <!-- Protokol se nyní vybírá automaticky -->
       <button id="copylog">Copy log file</button>
     </div>
   </nav>
@@ -50,38 +43,7 @@
     const valuesDiv = document.getElementById('values');
     const getAllBtn = document.getElementById('getall');
     const copyLogBtn = document.getElementById('copylog');
-    const protoBtns = document.querySelectorAll('.proto-btn');
-
-    // Výchozí protokol
-    let selectedProto = 2; // ISO 9141-2
-
-protoBtns.forEach(btn => {
-  btn.addEventListener('click', async () => {
-    selectedProto = btn.getAttribute('data-proto');
-    protoBtns.forEach(b => b.style.background = '');
-    btn.style.background = '#cce';
-    logDebug('Změněn protokol na ATSP' + selectedProto);
-    // Pokud je připojeno, pošli ATSPx ihned
-    if (characteristic) {
-      const cmd = 'ATSP' + selectedProto + '\r';
-      const data = new TextEncoder().encode(cmd);
-      logDebug('SEND: ' + cmd.trim());
-      try {
-        await characteristic.writeValue(data);
-        output.textContent += `\nProtokol změněn na ATSP${selectedProto}`;
-      } catch (e) {
-        output.textContent += `\nChyba při změně protokolu: ${e.message}`;
-        logDebug('CHYBA při změně protokolu: ' + e.message);
-      }
-    } else {
-      output.textContent += `\nProtokol bude použit při příštím připojení.`;
-    }
-  });
-});
-    // Nastavit výchozí zvýraznění
-    protoBtns.forEach(btn => {
-      if (btn.getAttribute('data-proto') == selectedProto) btn.style.background = '#cce';
-    });
+    // Protokol se vybírá automaticky (ATSP0)
 
     // Logovací mechanismus
     let debugLog = '';
@@ -90,17 +52,19 @@ protoBtns.forEach(btn => {
       debugLog += `[${time}] ${msg}\n`;
     }
 
-    // PID map for VW T5 2008 (common OBD-II PIDs)
-    const PIDS = [
-      { name: 'Otáčky motoru (RPM)', pid: '010C', parse: parseRPM },
-      { name: 'Rychlost vozidla (km/h)', pid: '010D', parse: parseSpeed },
-      { name: 'Teplota chladicí kapaliny (°C)', pid: '0105', parse: parseCoolantTemp },
-      { name: 'Průtok vzduchu (MAF, g/s)', pid: '0110', parse: parseMAF },
-      { name: 'Spotřeba paliva (l/h)', pid: '015E', parse: parseFuelRate },
-    ];
-
+    // Mapa známých PIDů a jejich parserů
+    const PID_DEFS = {
+      '010C': { name: 'Otáčky motoru (RPM)', parse: parseRPM },
+      '010D': { name: 'Rychlost vozidla (km/h)', parse: parseSpeed },
+      '0105': { name: 'Teplota chladicí kapaliny (°C)', parse: parseCoolantTemp },
+      '0110': { name: 'Průtok vzduchu (MAF, g/s)', parse: parseMAF },
+      '015E': { name: 'Spotřeba paliva (l/h)', parse: parseFuelRate },
+      // ...další známé PIDy...
+    };
     let characteristic = null;
+    let supportedPIDs = [];
     let lastValues = {};
+    let refreshInterval = null;
 
 
     // Parsování odpovědí pro různé PIDs
@@ -179,21 +143,12 @@ protoBtns.forEach(btn => {
         await characteristic.startNotifications();
         characteristic.addEventListener('characteristicvaluechanged', (event) => {
           const value = new TextDecoder().decode(event.target.value);
-          output.textContent += `\nOBD odpověď: ${value}`;
           logDebug('OBD odpověď: ' + value.replace(/\r?\n/g, ' '));
-          // Zkusit naparsovat všechny hodnoty
-          for (const pid of PIDS) {
-            const parsed = pid.parse(value);
-            if (parsed !== null) {
-              lastValues[pid.name] = parsed;
-              updateValuesDisplay();
-              logDebug(`Parsed ${pid.name}: ${parsed}`);
-            }
-          }
+          handleOBDResponse(value);
         });
 
         // Inicializace ELM327
-        const initCmds = ['ATZ', 'ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATSP' + selectedProto];
+        const initCmds = ['ATZ', 'ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATSP0'];
         for (const cmd of initCmds) {
           const data = new TextEncoder().encode(cmd + '\r');
           logDebug('SEND: ' + cmd);
@@ -202,11 +157,16 @@ protoBtns.forEach(btn => {
         }
 
         connectBtn.style.display = 'none';
-        refreshBtn.style.display = '';
-        getAllBtn.style.display = '';
-        valuesDiv.innerHTML = '<em>Stiskněte "Načíst hodnoty" nebo "GetALL" pro zobrazení údajů.</em>';
+        refreshBtn.style.display = 'none';
+        getAllBtn.style.display = 'none';
         lastValues = {};
+        // Zjisti podporované PIDy
+        supportedPIDs = await getSupportedPIDs();
+        createPIDTable();
         logDebug('Připojení dokončeno.');
+        // Spusť periodické obnovování hodnot
+        if (refreshInterval) clearInterval(refreshInterval);
+        refreshInterval = setInterval(refreshAllPIDValues, 1000);
       } catch (err) {
         output.textContent = `Chyba: ${err.message}`;
         logDebug('CHYBA: ' + err.message);
@@ -214,19 +174,14 @@ protoBtns.forEach(btn => {
         refreshBtn.style.display = 'none';
         getAllBtn.style.display = 'none';
         valuesDiv.innerHTML = '';
-    async function getAllPIDs() {
-      if (!characteristic) return;
-      output.textContent += '\nZjišťuji všechny dostupné PIDy...';
-      logDebug('SEND: 0100/0120/0140/0160 (Get all PIDs)');
-      let supportedPIDs = [];
+    async function getSupportedPIDs() {
+      if (!characteristic) return [];
+      let pids = [];
       let pidBase = 0x00;
       for (let i = 0; i < 4; i++) { // 0100, 0120, 0140, 0160
         const pidCmd = '01' + pidBase.toString(16).padStart(2, '0').toUpperCase() + '\r';
         const data = new TextEncoder().encode(pidCmd);
         await characteristic.writeValue(data);
-        output.textContent += `\nPříkaz odeslán: ${pidCmd.trim()}`;
-        logDebug('SEND: ' + pidCmd.trim());
-        // Čekáme na odpověď
         let response = await new Promise(resolve => {
           let handler = (event) => {
             const value = new TextDecoder().decode(event.target.value);
@@ -236,14 +191,12 @@ protoBtns.forEach(btn => {
             }
           };
           characteristic.addEventListener('characteristicvaluechanged', handler);
-          // Timeout fallback
           setTimeout(() => {
             characteristic.removeEventListener('characteristicvaluechanged', handler);
             resolve(null);
           }, 1000);
         });
         if (response) {
-          // Najdi hex blok po "41 XX "
           const m = response.match(/41 [0-9A-F]{2} (([0-9A-F]{2} ?){4})/i);
           if (m) {
             const bytes = m[1].replace(/ /g, '').match(/.{2}/g);
@@ -254,7 +207,7 @@ protoBtns.forEach(btn => {
                 for (let bit = 0; bit < 8; bit++) {
                   if (byte & (1 << (7 - bit))) {
                     const pidNum = base + b * 8 + bit;
-                    supportedPIDs.push('01' + pidNum.toString(16).padStart(2, '0').toUpperCase());
+                    pids.push('01' + pidNum.toString(16).padStart(2, '0').toUpperCase());
                   }
                 }
               }
@@ -263,31 +216,21 @@ protoBtns.forEach(btn => {
         }
         pidBase += 0x20;
       }
-      if (supportedPIDs.length > 0) {
-        output.textContent += `\nDostupné PIDy: ${supportedPIDs.join(', ')}`;
-        logDebug('Dostupné PIDy: ' + supportedPIDs.join(', '));
-      } else {
-        output.textContent += '\nNepodařilo se zjistit dostupné PIDy.';
-        logDebug('Nepodařilo se zjistit dostupné PIDy.');
-      }
+      return pids;
     }
       }
     }
 
-    async function refreshValues() {
-      if (!characteristic) return;
-      output.textContent += '\nNačítám hodnoty...';
-      logDebug('START: Načítám hodnoty...');
-      lastValues = {};
-      updateValuesDisplay();
-      for (const pid of PIDS) {
-        const cmd = pid.pid + '\r';
+    async function refreshAllPIDValues() {
+      if (!characteristic || supportedPIDs.length === 0) return;
+      for (const pid of supportedPIDs) {
+        const cmd = pid + '\r';
         const data = new TextEncoder().encode(cmd);
-        logDebug('SEND: ' + pid.pid);
         await characteristic.writeValue(data);
-        output.textContent += `\nPříkaz odeslán: ${cmd.trim()}`;
-        await new Promise(r => setTimeout(r, 300));
+        await new Promise(r => setTimeout(r, 100));
       }
+    }
+
     // Kopírování logu do schránky
     copyLogBtn.addEventListener('click', async () => {
       try {
@@ -299,25 +242,39 @@ protoBtns.forEach(btn => {
         setTimeout(() => copyLogBtn.textContent = 'Copy log file', 1500);
       }
     });
-    }
 
-    function updateValuesDisplay() {
-      if (Object.keys(lastValues).length === 0) {
+    function createPIDTable() {
+      if (!supportedPIDs || supportedPIDs.length === 0) {
         valuesDiv.innerHTML = '<em>Žádné hodnoty nejsou k dispozici.</em>';
         return;
       }
       let html = '<table style="margin:auto;">';
-      for (const pid of PIDS) {
-        html += `<tr><td style='text-align:right;padding:0.3em 1em;'>${pid.name}:</td><td style='text-align:left;padding:0.3em 1em;'>${lastValues[pid.name] !== undefined ? lastValues[pid.name] : '--'}`;
-        if (pid.name.includes('RPM')) html += ' ot/min';
-        if (pid.name.includes('km/h')) html += ' km/h';
-        if (pid.name.includes('°C')) html += ' °C';
-        if (pid.name.includes('MAF')) html += ' g/s';
-        if (pid.name.includes('paliva')) html += ' l/h';
-        html += '</td></tr>';
+      for (const pid of supportedPIDs) {
+        const def = PID_DEFS[pid];
+        const label = def ? def.name : pid;
+        html += `<tr><td style='text-align:right;padding:0.3em 1em;'>${label}:</td><td><input type='text' id='pid_${pid}' style='width:120px;text-align:left;' readonly value='--'></td></tr>`;
       }
       html += '</table>';
       valuesDiv.innerHTML = html;
+    }
+
+    // Zpracování odpovědí a aktualizace hodnot v tabulce
+    function handleOBDResponse(value) {
+      for (const pid of supportedPIDs) {
+        const def = PID_DEFS[pid];
+        let parsed = null;
+        if (def && def.parse) {
+          parsed = def.parse(value);
+        } else {
+          const m = value.match(new RegExp(`41 ${pid.substring(2)} ([0-9A-F ]+)`, 'i'));
+          if (m) parsed = m[1].replace(/ /g, '');
+        }
+        if (parsed !== null) {
+          lastValues[pid] = parsed;
+          const el = document.getElementById('pid_' + pid);
+          if (el) el.value = parsed;
+        }
+      }
     }
 
     connectBtn.addEventListener('click', connectOBD);
