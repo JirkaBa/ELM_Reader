@@ -5,6 +5,11 @@
       tx: 0xffe1,
       rx: 0xffe1,
     },
+    jdy: {
+      service: 0xfff0,
+      tx: 0xfff1,
+      rx: 0xfff2,
+    },
     nus: {
       service: "6e400001-b5a3-f393-e0a9-e50e24dcca9e",
       tx: "6e400002-b5a3-f393-e0a9-e50e24dcca9e",
@@ -19,6 +24,7 @@
 
   const OPTIONAL_SERVICES = [
     BLE_PROFILES.hm10.service,
+    BLE_PROFILES.jdy.service,
     BLE_PROFILES.nus.service,
     BLE_PROFILES.sps.service,
   ];
@@ -361,7 +367,7 @@
     if (!state.server) return null;
     const order =
       state.settings.profile === "auto"
-        ? ["hm10", "nus", "sps"]
+        ? ["hm10", "jdy", "nus", "sps"]
         : [state.settings.profile];
 
     for (const key of order) {
@@ -371,17 +377,55 @@
         const service = await state.server.getPrimaryService(profile.service);
         return { ...profile, service };
       } catch (error) {
-        log(`Servis ${key} nenalezen (${error.message})`);
+          log(`Servis ${key} nenalezen (${error.message})`);
       }
+    }
+    if (state.settings.profile === "auto") {
+      log("Zkouším autodetekci BLE servisu…");
+      return autoDiscoverProfile();
     }
     return null;
   }
 
-  async function getCharacteristic(service, uuid) {
-    if (typeof uuid === "number") {
-      return service.getCharacteristic(uuid);
+  async function autoDiscoverProfile() {
+    try {
+      const services = await state.server.getPrimaryServices();
+      for (const service of services) {
+        const characteristics = await service.getCharacteristics();
+        let tx = null;
+        let rx = null;
+        for (const char of characteristics) {
+          const props = char.properties;
+          if (!tx && (props.writeWithoutResponse || props.write)) {
+            tx = char;
+          }
+          if (!rx && (props.notify || props.indicate)) {
+            rx = char;
+          }
+        }
+        if (tx && rx) {
+          log(`Nalezen generický servis ${service.uuid}`);
+          return { service, tx, rx };
+        }
+      }
+      log("Autodetekce nenašla vhodné charakteristiky.");
+    } catch (error) {
+      log(`Chyba autodetekce: ${error.message}`, { level: "error" });
     }
-    return service.getCharacteristic(uuid);
+    return null;
+  }
+
+  async function getCharacteristic(service, handle) {
+    if (handle && typeof handle === "object" && "uuid" in handle && "properties" in handle) {
+      return handle;
+    }
+    if (!service || typeof service.getCharacteristic !== "function") {
+      throw new Error("Neplatná Bluetooth služba.");
+    }
+    if (typeof handle === "number" || typeof handle === "string") {
+      return service.getCharacteristic(handle);
+    }
+    throw new Error("Neplatná charakteristika.");
   }
 
   async function initialiseElm() {

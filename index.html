@@ -89,6 +89,7 @@
         <li>Na telefonu/tabletu otevři tuto stránku přes GitLab Pages v prohlížeči Chrome (Android) nebo Edge/Chrome (desktop).</li>
         <li>Klikni na „Připojit OBD-II“ a v dialogu vyber zařízení (často se jmenuje „OBDII“, „OBDII BLE“, „V-LINK“ atd.).</li>
         <li>Po úspěšném připojení aplikace automaticky inicializuje ELM327 a začne načítat PIDs 010D (rychlost) a 0110 (MAF).</li>
+        <li>Když se nepodaří najít BLE servis, otevři „Pokročilá nastavení“, zkus přepnout profil na JDY nebo jiný a zopakuj připojení. Můžeš také snížit interval dotazování.</li>
         <li>Hodnota „Aktuální“ se počítá ze MAF: <code>flow = ((MAF / AFR) / hustota) * 3600</code> a následně <code>spotřeba = flow / rychlost * 100</code>. Pro diesel se používá AFR 14,5 a hustota 0,832 kg/l.</li>
       </ol>
       <p class="note">
@@ -120,6 +121,7 @@
       <label for="profileSelect" class="block-label">Bluetooth profil</label>
       <select id="profileSelect">
         <option value="auto">Automaticky (doporučeno)</option>
+        <option value="jdy">JDY / FFF0-FFF2</option>
         <option value="hm10">HM-10 / FFE0-FFE1 (většina BLE ELM)</option>
         <option value="nus">Nordic UART (6E40…)</option>
         <option value="sps">SPS (49535343…)</option>
