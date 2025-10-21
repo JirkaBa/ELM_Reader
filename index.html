@@ -1,285 +1,144 @@
 <!DOCTYPE html>
 <html lang="cs">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#000000" />
-  <title>Data Scanner</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ELM Reader</title>
+  <meta name="description" content="Webová aplikace pro čtení dat z OBD-II ELM327 přes Bluetooth.">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
   <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
-  <style>
-    body { font-family: sans-serif; text-align: center; padding: 2em; }
-    button { padding: 1em; font-size: 1.2em; margin-top: 1em; }
-    pre { background: #eee; padding: 1em; text-align: left; max-width: 600px; margin: 1em auto; white-space: pre-wrap; }
-    #consumption { font-size: 2em; color: #007700; margin-top: 1em; }
-  </style>
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="app.js"></script>
 </head>
 <body>
-  <h1>Data Scanner</h1>
-
-
-  <nav style="margin-bottom:2em;">
-    <div id="menu" style="display:flex;flex-wrap:wrap;gap:0.5em;justify-content:center;align-items:center;">
-      <button id="connect">Připojit k OBD</button>
-      <button id="refresh" style="display:none;">Načíst hodnoty</button>
-      <button id="getall" style="display:none;">GetALL</button>
-      <!-- Protokol se nyní vybírá automaticky -->
-      <button id="copylog">Copy log file</button>
+  <header class="app-header">
+    <div class="branding">
+      <span class="dot"></span>
+      <div>
+        <h1>ELM Reader</h1>
+        <p class="subtitle">Aktuální a průměrná spotřeba pro VW Transporter T5 (2008)</p>
+      </div>
     </div>
-  </nav>
+    <button id="installPrompt" class="ghost-button" hidden>Instalovat jako aplikaci</button>
+  </header>
 
-  <div id="values"></div>
-  <pre id="output">Nepřipojeno</pre>
-  <button id="copylog" style="display:none;">Copy log file</button>
+  <main>
+    <section class="card hero">
+      <div class="hero-controls">
+        <button id="connectBtn" class="primary-button">Připojit OBD-II</button>
+        <button id="disconnectBtn" class="secondary-button" disabled>Odpojit</button>
+        <button id="simulateBtn" class="ghost-button">Vyzkoušet simulaci</button>
+      </div>
+      <div class="status">
+        <p><strong>Stav:</strong> <span id="connectionState">Nepřipojeno</span></p>
+        <p><strong>Zařízení:</strong> <span id="deviceName">—</span></p>
+        <p><strong>Běh smyčky:</strong> <span id="pollingState">neaktivní</span></p>
+      </div>
+    </section>
 
-  <script>
+    <section class="card data-card">
+      <h2>Spotřeba</h2>
+      <div class="data-grid">
+        <div class="data-point prominent">
+          <h3>Aktuální</h3>
+          <p id="instantConsumption" class="value">—</p>
+          <span class="unit">l / 100 km</span>
+        </div>
+        <div class="data-point">
+          <h3>Průměrná</h3>
+          <p id="averageConsumption" class="value">—</p>
+          <span class="unit">l / 100 km</span>
+        </div>
+        <div class="data-point">
+          <h3>Okamžitý průtok</h3>
+          <p id="fuelFlow" class="value">—</p>
+          <span class="unit">l / h</span>
+        </div>
+        <div class="data-point">
+          <h3>Rychlost</h3>
+          <p id="vehicleSpeed" class="value">—</p>
+          <span class="unit">km / h</span>
+        </div>
+      </div>
+    </section>
 
+    <section class="card">
+      <h2>Průběh jízdy</h2>
+      <div class="trip-stats">
+        <div>
+          <span class="label">Ujetá vzdálenost</span>
+          <strong id="tripDistance">0.00 km</strong>
+        </div>
+        <div>
+          <span class="label">Spotřebované palivo</span>
+          <strong id="tripFuel">0.00 l</strong>
+        </div>
+        <div>
+          <span class="label">Doba připojení</span>
+          <strong id="sessionDuration">0:00</strong>
+        </div>
+      </div>
+      <button id="resetTripBtn" class="ghost-button">Vynulovat statistiky</button>
+    </section>
 
-    const output = document.getElementById('output');
+    <section class="card instructions">
+      <h2>Jak na to</h2>
+      <ol>
+        <li>Nastartuj Transporter T5 (2008, 1.9 TDI) a zapoj adaptér ELM327 Bluetooth do zásuvky OBD-II.</li>
+        <li>Na telefonu/tabletu otevři tuto stránku přes GitLab Pages v prohlížeči Chrome (Android) nebo Edge/Chrome (desktop).</li>
+        <li>Klikni na „Připojit OBD-II“ a v dialogu vyber zařízení (často se jmenuje „OBDII“, „OBDII BLE“, „V-LINK“ atd.).</li>
+        <li>Po úspěšném připojení aplikace automaticky inicializuje ELM327 a začne načítat PIDs 010D (rychlost) a 0110 (MAF).</li>
+        <li>Hodnota „Aktuální“ se počítá ze MAF: <code>flow = ((MAF / AFR) / hustota) * 3600</code> a následně <code>spotřeba = flow / rychlost * 100</code>. Pro diesel se používá AFR 14,5 a hustota 0,832 kg/l.</li>
+      </ol>
+      <p class="note">
+        Pokud se nepodaří získat data z MAF (PID 0110), zkontroluj, zda má jednotka tento PID povolený. Některé jednotky mohou vyžadovat jiný profil BLE – v nastavení aplikace lze přepnout profil ručně.
+      </p>
+    </section>
 
-    const connectBtn = document.getElementById('connect');
-    const refreshBtn = document.getElementById('refresh');
-    const valuesDiv = document.getElementById('values');
-    const getAllBtn = document.getElementById('getall');
-    const copyLogBtn = document.getElementById('copylog');
-    // Protokol se vybírá automaticky (ATSP0)
+    <section class="card telemetry">
+      <h2>Telemetrie a log</h2>
+      <div class="log-controls">
+        <button id="clearLogBtn" class="ghost-button">Vyčistit log</button>
+        <label class="toggle">
+          <input type="checkbox" id="rawToggle" checked>
+          <span>Zobrazovat surové odpovědi</span>
+        </label>
+      </div>
+      <pre id="logWindow" class="log-window" aria-live="polite"></pre>
+    </section>
+  </main>
 
-    // Logovací mechanismus
-    let debugLog = '';
-    function logDebug(msg) {
-      const time = new Date().toISOString();
-      debugLog += `[${time}] ${msg}\n`;
-    }
+  <footer class="app-footer">
+    <p>Vyvinuto pro Autocraft ELM327 &rsaquo; GitLab Pages ready.</p>
+    <a href="#!" id="openSettings">Pokročilá nastavení</a>
+  </footer>
 
-    // Mapa známých PIDů a jejich parserů
-    const PID_DEFS = {
-      '010C': { name: 'Otáčky motoru (RPM)', parse: parseRPM },
-      '010D': { name: 'Rychlost vozidla (km/h)', parse: parseSpeed },
-      '0105': { name: 'Teplota chladicí kapaliny (°C)', parse: parseCoolantTemp },
-      '0110': { name: 'Průtok vzduchu (MAF, g/s)', parse: parseMAF },
-      '015E': { name: 'Spotřeba paliva (l/h)', parse: parseFuelRate },
-      // ...další známé PIDy...
-    };
-    let characteristic = null;
-    let supportedPIDs = [];
-    let lastValues = {};
-    let refreshInterval = null;
+  <dialog id="settingsDialog">
+    <form method="dialog">
+      <h2>Pokročilá nastavení</h2>
+      <label for="profileSelect" class="block-label">Bluetooth profil</label>
+      <select id="profileSelect">
+        <option value="auto">Automaticky (doporučeno)</option>
+        <option value="hm10">HM-10 / FFE0-FFE1 (většina BLE ELM)</option>
+        <option value="nus">Nordic UART (6E40…)</option>
+        <option value="sps">SPS (49535343…)</option>
+      </select>
 
+      <label for="pollingInterval" class="block-label">Interval dotazování (ms)</label>
+      <input type="number" id="pollingInterval" min="200" step="100" value="1000">
 
-    // Parsování odpovědí pro různé PIDs
-    function parseRPM(response) {
-      // 41 0C XX YY
-      const m = response.match(/41 0C ([0-9A-F]{2}) ([0-9A-F]{2})/i);
-      if (!m) return null;
-      const A = parseInt(m[1], 16);
-      const B = parseInt(m[2], 16);
-      return (((A * 256) + B) / 4).toFixed(0);
-    }
-    function parseSpeed(response) {
-      // 41 0D XX
-      const m = response.match(/41 0D ([0-9A-F]{2})/i);
-      if (!m) return null;
-      return parseInt(m[1], 16);
-    }
-    function parseCoolantTemp(response) {
-      // 41 05 XX
-      const m = response.match(/41 05 ([0-9A-F]{2})/i);
-      if (!m) return null;
-      return parseInt(m[1], 16) - 40;
-    }
-    function parseMAF(response) {
-      // 41 10 XX YY
-      const m = response.match(/41 10 ([0-9A-F]{2}) ([0-9A-F]{2})/i);
-      if (!m) return null;
-      const A = parseInt(m[1], 16);
-      const B = parseInt(m[2], 16);
-      return (((A * 256) + B) / 100).toFixed(2);
-    }
-    function parseFuelRate(response) {
-      // 41 5E XX YY
-      const m = response.match(/41 5E ([0-9A-F]{2}) ([0-9A-F]{2})/i);
-      if (!m) return null;
-      const A = parseInt(m[1], 16);
-      const B = parseInt(m[2], 16);
-      return (((A * 256) + B) / 20).toFixed(2);
-    }
+      <label for="afrInput" class="block-label">AFR (poměr vzduch/palivo)</label>
+      <input type="number" id="afrInput" min="10" max="20" step="0.1" value="14.5">
 
+      <label for="densityInput" class="block-label">Hustota paliva (kg/l)</label>
+      <input type="number" id="densityInput" min="0.6" max="1.0" step="0.001" value="0.832">
 
-    async function connectOBD() {
-      // Zkusíme více variant UUID služeb a charakteristik
-      const SERVICE_CHARACTERISTIC_PAIRS = [
-        { service: 0xFFE0, characteristic: 0xFFE1 },
-        { service: 0xFFF0, characteristic: 0xFFF1 },
-        { service: '0000ffe0-0000-1000-8000-00805f9b34fb', characteristic: '0000ffe1-0000-1000-8000-00805f9b34fb' },
-        { service: '0000fff0-0000-1000-8000-00805f9b34fb', characteristic: '0000fff1-0000-1000-8000-00805f9b34fb' },
-      ];
-      try {
-        output.textContent = 'Vyhledávám OBD zařízení...';
-        logDebug('START: Vyhledávám OBD zařízení...');
-        const device = await navigator.bluetooth.requestDevice({
-          filters: [{ namePrefix: 'OBD' }],
-          optionalServices: SERVICE_CHARACTERISTIC_PAIRS.map(p => p.service)
-        });
-        output.textContent = `Zařízení nalezeno: ${device.name}`;
-        logDebug('Zařízení nalezeno: ' + device.name);
-        const server = await device.gatt.connect();
-        let found = false;
-        for (const pair of SERVICE_CHARACTERISTIC_PAIRS) {
-          try {
-            const service = await server.getPrimaryService(pair.service);
-            characteristic = await service.getCharacteristic(pair.characteristic);
-            found = true;
-            output.textContent += `\nPoužita služba: ${pair.service}, charakteristika: ${pair.characteristic}`;
-            logDebug(`Použita služba: ${pair.service}, charakteristika: ${pair.characteristic}`);
-            break;
-          } catch (e) {
-            // Zkusíme další kombinaci
-          }
-        }
-        if (!found) throw new Error('Nepodařilo se najít vhodnou službu/charakteristiku pro OBD zařízení.');
-
-        // Posloucháme odpovědi
-        await characteristic.startNotifications();
-        characteristic.addEventListener('characteristicvaluechanged', (event) => {
-          const value = new TextDecoder().decode(event.target.value);
-          logDebug('OBD odpověď: ' + value.replace(/\r?\n/g, ' '));
-          handleOBDResponse(value);
-        });
-
-        // Inicializace ELM327
-        const initCmds = ['ATZ', 'ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATSP0'];
-        for (const cmd of initCmds) {
-          const data = new TextEncoder().encode(cmd + '\r');
-          logDebug('SEND: ' + cmd);
-          await characteristic.writeValue(data);
-          await new Promise(r => setTimeout(r, 300));
-        }
-
-        connectBtn.style.display = 'none';
-        refreshBtn.style.display = 'none';
-        getAllBtn.style.display = 'none';
-        lastValues = {};
-        // Zjisti podporované PIDy
-        supportedPIDs = await getSupportedPIDs();
-        createPIDTable();
-        logDebug('Připojení dokončeno.');
-        // Spusť periodické obnovování hodnot
-        if (refreshInterval) clearInterval(refreshInterval);
-        refreshInterval = setInterval(refreshAllPIDValues, 1000);
-      } catch (err) {
-        output.textContent = `Chyba: ${err.message}`;
-        logDebug('CHYBA: ' + err.message);
-        connectBtn.style.display = '';
-        refreshBtn.style.display = 'none';
-        getAllBtn.style.display = 'none';
-        valuesDiv.innerHTML = '';
-    async function getSupportedPIDs() {
-      if (!characteristic) return [];
-      let pids = [];
-      let pidBase = 0x00;
-      for (let i = 0; i < 4; i++) { // 0100, 0120, 0140, 0160
-        const pidCmd = '01' + pidBase.toString(16).padStart(2, '0').toUpperCase() + '\r';
-        const data = new TextEncoder().encode(pidCmd);
-        await characteristic.writeValue(data);
-        let response = await new Promise(resolve => {
-          let handler = (event) => {
-            const value = new TextDecoder().decode(event.target.value);
-            if (/^41 [0-9A-F]{2} /i.test(value)) {
-              characteristic.removeEventListener('characteristicvaluechanged', handler);
-              resolve(value);
-            }
-          };
-          characteristic.addEventListener('characteristicvaluechanged', handler);
-          setTimeout(() => {
-            characteristic.removeEventListener('characteristicvaluechanged', handler);
-            resolve(null);
-          }, 1000);
-        });
-        if (response) {
-          const m = response.match(/41 [0-9A-F]{2} (([0-9A-F]{2} ?){4})/i);
-          if (m) {
-            const bytes = m[1].replace(/ /g, '').match(/.{2}/g);
-            if (bytes) {
-              let base = pidBase + 1;
-              for (let b = 0; b < 4; b++) {
-                let byte = parseInt(bytes[b], 16);
-                for (let bit = 0; bit < 8; bit++) {
-                  if (byte & (1 << (7 - bit))) {
-                    const pidNum = base + b * 8 + bit;
-                    pids.push('01' + pidNum.toString(16).padStart(2, '0').toUpperCase());
-                  }
-                }
-              }
-            }
-          }
-        }
-        pidBase += 0x20;
-      }
-      return pids;
-    }
-      }
-    }
-
-    async function refreshAllPIDValues() {
-      if (!characteristic || supportedPIDs.length === 0) return;
-      for (const pid of supportedPIDs) {
-        const cmd = pid + '\r';
-        const data = new TextEncoder().encode(cmd);
-        await characteristic.writeValue(data);
-        await new Promise(r => setTimeout(r, 100));
-      }
-    }
-
-    // Kopírování logu do schránky
-    copyLogBtn.addEventListener('click', async () => {
-      try {
-        await navigator.clipboard.writeText(debugLog);
-        copyLogBtn.textContent = 'Log zkopírován!';
-        setTimeout(() => copyLogBtn.textContent = 'Copy log file', 1500);
-      } catch (e) {
-        copyLogBtn.textContent = 'Chyba kopírování!';
-        setTimeout(() => copyLogBtn.textContent = 'Copy log file', 1500);
-      }
-    });
-
-    function createPIDTable() {
-      if (!supportedPIDs || supportedPIDs.length === 0) {
-        valuesDiv.innerHTML = '<em>Žádné hodnoty nejsou k dispozici.</em>';
-        return;
-      }
-      let html = '<table style="margin:auto;">';
-      for (const pid of supportedPIDs) {
-        const def = PID_DEFS[pid];
-        const label = def ? def.name : pid;
-        html += `<tr><td style='text-align:right;padding:0.3em 1em;'>${label}:</td><td><input type='text' id='pid_${pid}' style='width:120px;text-align:left;' readonly value='--'></td></tr>`;
-      }
-      html += '</table>';
-      valuesDiv.innerHTML = html;
-    }
-
-    // Zpracování odpovědí a aktualizace hodnot v tabulce
-    function handleOBDResponse(value) {
-      for (const pid of supportedPIDs) {
-        const def = PID_DEFS[pid];
-        let parsed = null;
-        if (def && def.parse) {
-          parsed = def.parse(value);
-        } else {
-          const m = value.match(new RegExp(`41 ${pid.substring(2)} ([0-9A-F ]+)`, 'i'));
-          if (m) parsed = m[1].replace(/ /g, '');
-        }
-        if (parsed !== null) {
-          lastValues[pid] = parsed;
-          const el = document.getElementById('pid_' + pid);
-          if (el) el.value = parsed;
-        }
-      }
-    }
-
-    connectBtn.addEventListener('click', connectOBD);
-    refreshBtn.addEventListener('click', refreshValues);
-    getAllBtn.addEventListener('click', getAllPIDs);
-  </script>
+      <div class="dialog-actions">
+        <button value="cancel" class="ghost-button">Zavřít</button>
+        <button id="saveSettingsBtn" value="default" class="primary-button">Uložit</button>
+      </div>
+    </form>
+  </dialog>
 </body>
 </html>

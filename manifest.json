@@ -1,21 +1,26 @@
 {
-  "name": "Spotřeba z OBD",
-  "short_name": "OBD Spotřeba",
-  "start_url": "index.html",
+  "name": "ELM Reader",
+  "short_name": "ELM Reader",
+  "start_url": ".",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#007700",
-  "description": "Aplikace pro zobrazení průměrné spotřeby paliva z OBD-II.",
+  "background_color": "#0f172a",
+  "theme_color": "#38bdf8",
+  "description": "Webová aplikace pro čtení dat z ELM327 OBD-II a výpočet spotřeby paliva.",
+  "dir": "ltr",
+  "lang": "cs",
+  "orientation": "portrait-primary",
   "icons": [
     {
       "src": "icon-192.png",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
     },
     {
       "src": "icon-512.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
     }
   ]
 }
